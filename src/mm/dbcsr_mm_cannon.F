@@ -895,7 +895,8 @@ CONTAINS
       REAL(kind=sp), ALLOCATABLE, DIMENSION(:,:) :: left_norms, right_norms
       REAL(kind=sp), ALLOCATABLE, DIMENSION(:)   :: row_max_epss
       REAL(kind=sp), ALLOCATABLE, DIMENSION(:,:) :: left_norms_comm, right_norms_comm
-      INTEGER, ALLOCATABLE, DIMENSION(:) :: left_norms_comm_sr,left_norms_comm_rr,right_norms_comm_sr,right_norms_comm_rr
+      TYPE(mp_request_type), ALLOCATABLE, DIMENSION(:) :: left_norms_comm_sr,left_norms_comm_rr, &
+                                                          right_norms_comm_sr,right_norms_comm_rr
       REAL(kind=sp)                            :: filter_eps_sp
       TYPE(dbcsr_2d_array_type), POINTER :: left_buffer_2, left_buffer_calc, &
                                             left_buffer_comm, right_buffer_2, right_buffer_calc, right_buffer_comm
@@ -911,7 +912,6 @@ CONTAINS
       TYPE(mp_request_type), DIMENSION(:), ALLOCATABLE :: left_data_rr, left_data_sr, left_index_rr, &
                                                          left_index_sr, right_data_rr, right_data_sr, right_index_rr, right_index_sr
       LOGICAL :: acc_centric
-      double precision, pointer, contiguous :: tmp(:)
 !   ---------------------------------------------------------------------------
 
 !   ---------------------------------------------------------------------------
@@ -1768,12 +1768,12 @@ CONTAINS
 
             ! Sets the local right-matrix columns
             IF (otf_filtering) THEN
-               left_norms(:) = huge_norm
-               right_norms(:) = huge_norm
+               left_norms(:,v_ki_left) = huge_norm
+               right_norms(:,v_ki_right) = huge_norm
                CALL calculate_norms(right_buffer_calc%mats(v_ki_right, 1), &
-                                    right_norms, k_sizes, n_sizes)
+                                    right_norms(:,v_ki_right), k_sizes, n_sizes)
                CALL calculate_norms(left_buffer_calc%mats(1, v_ki_left), &
-                                    left_norms, m_sizes, k_sizes)
+                                    left_norms(:,v_ki_left), m_sizes, k_sizes)
             END IF
 
             ! Wait for left and right buffers transfer to device before proceeding
@@ -1931,7 +1931,6 @@ CONTAINS
       IF (ASSOCIATED(k_sizes)) DEALLOCATE (k_sizes)
       !
       CALL timestop(handle)
-      call mpicheck()
    END SUBROUTINE multiply_cannon
 
    SUBROUTINE multiply_cannon_g2g(left_set, right_set, product_matrix, &
