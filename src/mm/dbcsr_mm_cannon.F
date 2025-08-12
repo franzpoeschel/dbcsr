@@ -923,7 +923,7 @@ CONTAINS
       NULLIFY (k_sizes)
       !
       ALLOCATE (left_buffer_2, right_buffer_2)
-      acc_centric=dbcsr_cfg%acc_centric .AND. has_acc
+      acc_centric=dbcsr_cfg%acc_centric%val .AND. use_acc()
       mult_id = mult_id + 1
 
       IF (PRESENT(retain_sparsity)) THEN
@@ -1350,6 +1350,7 @@ CONTAINS
                              data_size=2*right_max_nblks, memory_type=memtype_trsbuffer_2)
          trs_stackbuf_calc => trs_stackbuf_1
          trs_stackbuf_comm => trs_stackbuf_2
+      ENDIF
 
       ! Initial upload for acc_centric version
       ! We now send the transposed GPU buffer instead of the original buffer
@@ -1822,6 +1823,12 @@ CONTAINS
             DEALLOCATE (multrec(ithread)%p)
             CALL timestop(handle3)
          END IF
+
+         ! This is required for acc_centric, probably makes sense to add it to original algo as well
+         CALL acc_event_record(right_buffer_calc%mats(v_ki_right, 1)%data_area%d%acc_ready,&
+            right_buffer_calc%mats(v_ki_right, 1)%data_area%d%memory_type%acc_stream)
+         CALL acc_event_record(left_buffer_calc%mats(1, v_ki_left)%data_area%d%acc_ready,&
+            left_buffer_calc%mats(1, v_ki_left)%data_area%d%memory_type%acc_stream)
 
          ! This is required for acc_centric, probably makes sense to add it to original algo as well
          CALL acc_event_record(right_buffer_calc%mats(v_ki_right, 1)%data_area%d%acc_ready,&
