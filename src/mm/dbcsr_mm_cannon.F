@@ -17,6 +17,7 @@ MODULE dbcsr_mm_cannon
    !! dbcsr_mm_methods.
    !! - 2013-01    reorganized code (Ole Schuett)
 
+   USE nvtx
    USE dbcsr_acc_event, ONLY: acc_event_synchronize
    USE dbcsr_acc_device, ONLY: acc_device_synchronize
    USE dbcsr_acc_stream, ONLY: acc_stream_synchronize
@@ -926,6 +927,7 @@ CONTAINS
 
 !   ---------------------------------------------------------------------------
 
+      CALL nvtxStartRange("multiply_cannon")
       CALL timeset(routineN, handle)
       NULLIFY (trs_stackbuf_calc, trs_stackbuf_comm)
       NULLIFY (row_blk_sizes2enum, enum2row_blk_sizes)
@@ -1373,6 +1375,7 @@ CONTAINS
          END IF
 #endif
 
+         CALL nvtxStartRange("multiply_cannon: acc_init")
          CALL timeset(routineN//"_acc_init", handle1)
          DO v_ki_right = 1, right_row_nimages
             CALL dbcsr_data_host2dev(right_buffer_calc%mats(v_ki_right, 1)%data_area)
@@ -1427,6 +1430,7 @@ CONTAINS
             CALL acc_event_synchronize(left_buffer_calc%mats(1, v_ki_left)%data_area%d%acc_ready)
          END DO
          CALL timestop(handle1)
+         CALL nvtxEndRange()
       END IF
       !
       ! Reset indices for virtual images
@@ -1439,11 +1443,13 @@ CONTAINS
       ! sources. In the remaining iterations, the data are exchanged
       ! among neighbors.  In the last loop only calculations take place.
       !
+      CALL nvtxStartRange("multiply_cannon: _loop")
       CALL timeset(routineN//"_loop", handle1)
       !
       grouped_k_index: DO metronome = 0, nvirt_k - 1
          ! Wait for right matrix transfer completion. Wait in all but
          ! the first loop iteration.
+         CALL nvtxStartRange("multiply_cannon: _metrocomm1")
          CALL timeset(routineN//"_metrocomm1", handle2)
          wait_right: IF (v_ki_right .EQ. right_row_nimages) THEN
             ! Reset index
@@ -1471,6 +1477,7 @@ CONTAINS
             END DO
          END IF wait_right
          CALL timestop(handle2)
+         CALL nvtxEndRange()
          !
          ! Right matrix transfer. Transfer in all but the last loop
          ! iteration.
@@ -1531,9 +1538,11 @@ CONTAINS
                                      shifting='R')
                !
                IF (use_acc()) THEN
+                  CALL nvtxStartRange("multiply_cannon: _acc_sync_right")
                   CALL timeset(routineN//"_acc_sync_right", handle3)
                   CALL acc_event_synchronize(right_buffer_comm%mats(v_ki + 1, 1)%data_area%d%acc_ready)
                   CALL timestop(handle3)
+                  CALL nvtxEndRange()
                END IF
 
                right_src_p = right_pgrid(right_src_prow, right_src_pcol)
@@ -1558,6 +1567,7 @@ CONTAINS
                   grp = dbcsr_mp_group(right_mp_obj)
                END IF
                !
+               CALL nvtxStartRange("multiply_cannon: _metrocomm2")
                CALL timeset(routineN//"_metrocomm2", handle2)
 #if defined (__DBCSR_ACC)
                IF (acc_centric) THEN
@@ -1593,11 +1603,13 @@ CONTAINS
                                          data_type_byte, &
                                          dbcsr_mpi_statistics%data_size_breakdown(:, :, 1))
                CALL timestop(handle2)
+               CALL nvtxEndRange()
             END DO
          END IF xfer_right
          !
          ! Wait for left matrix transfer completion. Wait in all but
          ! the first loop iteration.
+         CALL nvtxStartRange("multiply_cannon: _metrocomm3")
          CALL timeset(routineN//"_metrocomm3", handle2)
          wait_left: IF (v_ki_left .EQ. left_col_nimages) THEN
             ! Reset index
@@ -1623,6 +1635,7 @@ CONTAINS
             END DO
          END IF wait_left
          CALL timestop(handle2)
+         CALL nvtxEndRange()
          !
          ! Left matrix transfer. Transfer in all but the last processor images.
          xfer_left: IF (v_ki_left .EQ. 0 .AND. metronome + left_col_nimages .LT. nvirt_k) THEN
@@ -1682,9 +1695,11 @@ CONTAINS
                                      shifting='L')
                !
                IF (use_acc()) THEN
+                  CALL nvtxStartRange("multiply_cannon: _acc_sync_left")
                   CALL timeset(routineN//"_acc_sync_left", handle3)
                   CALL acc_event_synchronize(left_buffer_comm%mats(1, v_ki + 1)%data_area%d%acc_ready)
                   CALL timestop(handle3)
+                  CALL nvtxEndRange()
                END IF
 
                left_src_p = left_pgrid(left_src_prow, left_src_pcol)
@@ -1709,6 +1724,7 @@ CONTAINS
                   grp = dbcsr_mp_group(left_mp_obj)
                END IF
                !
+               CALL nvtxStartRange("multiply_cannon: _metrocomm4")
                CALL timeset(routineN//"_metrocomm4", handle2)
 #if defined (__DBCSR_ACC)
                IF (acc_centric) THEN
@@ -1744,6 +1760,7 @@ CONTAINS
                                          data_type_byte, &
                                          dbcsr_mpi_statistics%data_size_breakdown(:, :, 2))
                CALL timestop(handle2)
+               CALL nvtxEndRange()
             END DO
          END IF xfer_left
          !
@@ -1795,9 +1812,11 @@ CONTAINS
 
             ! Wait for left and right buffers transfer to device before proceeding
             IF (use_acc()) THEN
+               CALL nvtxStartRange("multiply_cannon: _sync_h2d")
                CALL timeset(routineN//"_sync_h2d", handle2)
                CALL acc_device_synchronize()
                CALL timestop(handle2)
+               CALL nvtxEndRange()
             END IF
          ELSE
             ! H2D, transpose and norms are already sent from the previous iterations, we just need to update the host
@@ -1824,6 +1843,7 @@ CONTAINS
          ithread = 0; nthreads = 1
 !$       ithread = omp_get_thread_num(); nthreads = omp_get_num_threads()
 
+         CALL nvtxStartRange("multiply_cannon: _multrec")
          CALL timeset(routineN//"_multrec", handle2)
 
          CALL dbcsr_mm_multrec_multiply(multrec(ithread)%p, &
@@ -1835,10 +1855,12 @@ CONTAINS
                                         k_sizes=k_sizes)
 
          IF (metronome == nvirt_k - 1) THEN
+            CALL nvtxStartRange("multiply_cannon: _multrec_finalize")
             CALL timeset(routineN//"_multrec_finalize", handle3)
             CALL dbcsr_mm_multrec_finalize(multrec(ithread)%p)
             DEALLOCATE (multrec(ithread)%p)
             CALL timestop(handle3)
+            CALL nvtxEndRange()
          END IF
 
          ! This is required for acc_centric, probably makes sense to add it to original algo as well
@@ -1871,6 +1893,7 @@ CONTAINS
          END IF
 !$OMP BARRIER
          CALL timestop(handle2)
+         CALL nvtxEndRange()
 
 !$OMP END PARALLEL
          flop_total = flop_total + flop_single
@@ -1886,6 +1909,7 @@ CONTAINS
 
       END DO grouped_k_index
       CALL timestop(handle1)
+      CALL nvtxEndRange()
       CALL m_memory(mem)
       max_memory = MAX(max_memory, REAL(mem))
 
@@ -1944,6 +1968,7 @@ CONTAINS
       IF (ASSOCIATED(k_sizes)) DEALLOCATE (k_sizes)
       !
       CALL timestop(handle)
+      CALL nvtxEndRange()
    END SUBROUTINE multiply_cannon
 
    SUBROUTINE multiply_cannon_g2g(left_set, right_set, product_matrix, &
