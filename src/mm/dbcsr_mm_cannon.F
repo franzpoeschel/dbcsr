@@ -1362,6 +1362,10 @@ CONTAINS
          trs_stackbuf_comm => trs_stackbuf_2
       END IF
 
+      IF (right_row_nimages .LT. left_col_nimages) THEN
+         acc_centric = .FALSE.
+      END IF
+
       ! Initial upload for acc_centric version
       ! We now send the transposed GPU buffer instead of the original buffer
       IF (acc_centric) THEN
@@ -1385,7 +1389,7 @@ CONTAINS
          v_ki_right = 1
          DO v_ki = 1, max(left_col_nimages, right_row_nimages)
             IF (v_ki_right .GT. right_row_nimages) THEN
-               DBCSR_ABORT("Failed assumption left_col_nimages >= right_row_nimages")
+               DBCSR_ABORT("Failed assumption right_row_nimages >= left_col_nimages")
             END IF
             IF (v_ki_left .GT. left_col_nimages) THEN
                v_ki_left = 1
